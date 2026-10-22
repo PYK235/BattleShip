@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="BattleShip-Ant" default="jar" basedir=".">
+    <description>BattleShip Online - single Java Ant project with Client, Server, Common and MySQL.</description>
+    <property name="src.dir" value="src"/>
+    <property name="build.dir" value="build"/>
+    <property name="classes.dir" value="${build.dir}/classes"/>
+    <property name="dist.dir" value="dist"/>
+    <property name="jar.file" value="${dist.dir}/BattleShip.jar"/>
+
+    <path id="project.classpath">
+        <fileset dir="lib" includes="*.jar" erroronmissingdir="false"/>
+    </path>
+
+    <target name="clean">
+        <delete dir="${build.dir}"/>
+        <delete dir="${dist.dir}"/>
+    </target>
+
+    <target name="init">
+        <mkdir dir="${classes.dir}"/>
+        <mkdir dir="${dist.dir}"/>
+    </target>
+
+    <target name="compile" depends="init">
+        <javac srcdir="${src.dir}" destdir="${classes.dir}" encoding="UTF-8" source="17" target="17" includeantruntime="false" debug="true">
+            <classpath refid="project.classpath"/>
+        </javac>
+        <copy todir="${classes.dir}">
+            <fileset dir="${src.dir}" excludes="**/*.java"/>
+        </copy>
+    </target>
+
+    <target name="jar" depends="compile">
+        <jar destfile="${jar.file}" basedir="${classes.dir}">
+            <manifest>
+                <attribute name="Main-Class" value="battleship.client.ClientMain"/>
+            </manifest>
+        </jar>
+    </target>
+
+    <target name="run-server" depends="compile">
+        <java classname="battleship.server.ServerMain" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="${classes.dir}"/>
+                <path refid="project.classpath"/>
+            </classpath>
+        </java>
+    </target>
+
+    <target name="run-client" depends="compile">
+        <java classname="battleship.client.ClientMain" fork="true" failonerror="true">
+            <classpath>
+                <pathelement location="${classes.dir}"/>
+                <path refid="project.classpath"/>
+            </classpath>
+        </java>
+    </target>
+</project>
