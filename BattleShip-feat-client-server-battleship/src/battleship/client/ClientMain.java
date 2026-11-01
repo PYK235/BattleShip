@@ -20,21 +20,41 @@ public final class ClientMain {
     private static final Color CREAM = new Color(239, 226, 197);
     private static final Color STEEL = new Color(44, 70, 86);
     private static final Color WAR_RED = new Color(145, 43, 35);
+    private static final Color BOARD_WATER = new Color(12, 42, 57);
+    private static final Color BOARD_SHIP = new Color(30, 70, 81);
+    private static final Color BOARD_HIT = new Color(34, 126, 78);
+    private static final Color BOARD_MISS = new Color(157, 53, 49);
     private final JFrame frame = new JFrame("Battle Ship Online");
+    private final GameAudio audio = new GameAudio(message ->
+            SwingUtilities.invokeLater(() -> warn(message)));
     private GameClient client;
     private ChallengeController challenges;
     private String username;
     private String currentMatchId;
+    private String currentOpponent;
     private JPanel gamePanel;
+    private JLayeredPane gameLayers;
     private JPanel preparationPanel;
     private JPanel profilePanel;
     private JPanel rankingPanel;
     private String currentPage = "login";
     private JLabel preparationStatus;
+    private JLabel sunkShipBanner;
+    private JLabel sunkShipImage;
+    private javax.swing.Timer sunkShipBannerTimer;
+    private javax.swing.Timer resultGlowTimer;
+    private JPanel sunkShipOverlay;
+    private JPanel resultOverlay;
+    private JLabel resultMessage;
+    private JLabel quickMatchStatus;
     private JButton[][] ownCells;
     private JButton[][] enemyCells;
     private JLabel gameStatus;
     private JLabel turnCountdown;
+    private JButton quickPlayButton;
+    private JButton lobbySoundButton;
+    private JButton gameSoundButton;
+    private boolean quickMatchQueued;
     private javax.swing.Timer countdownTimer;
     private int secondsLeft;
     private boolean myTurn;
@@ -67,6 +87,7 @@ public final class ClientMain {
         frame.setContentPane(root);
         frame.addWindowListener(new java.awt.event.WindowAdapter() {
             public void windowClosing(java.awt.event.WindowEvent e) {
+                audio.close();
                 disconnect();
                 frame.dispose();
             }
@@ -121,31 +142,41 @@ public final class ClientMain {
         p.add(playerScroll, BorderLayout.CENTER);
 
         JButton challenge = new JButton("Thách đấu");
+        quickPlayButton = new JButton("Chơi ngay");
         JButton ranking = new JButton("Bảng xếp hạng");
         JButton profile = new JButton("Trang cá nhân");
         JButton refresh = new JButton("Làm mới");
         JButton logout = new JButton("Đăng xuất");
+        lobbySoundButton = createSoundButton();
         styleButton(challenge, true);
+        styleButton(quickPlayButton, true);
         styleButton(ranking, false);
         styleButton(profile, false);
         styleButton(refresh, false);
         styleButton(logout, false);
-        JPanel bottom = new JPanel(new GridLayout(2, 1));
+        quickMatchStatus = new JLabel(" ", SwingConstants.CENTER);
+        quickMatchStatus.setForeground(BRASS);
+        quickMatchStatus.setFont(quickMatchStatus.getFont().deriveFont(Font.BOLD, 13f));
+        JPanel bottom = new JPanel(new GridLayout(3, 1));
         bottom.setOpaque(false);
         JPanel social = new JPanel(new FlowLayout(FlowLayout.CENTER));
         social.setOpaque(false);
         social.add(challenge);
+        social.add(quickPlayButton);
         social.add(ranking);
         social.add(profile);
+        social.add(lobbySoundButton);
         JPanel session = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         session.setOpaque(false);
         session.add(refresh);
         session.add(logout);
         bottom.add(social);
         bottom.add(session);
+        bottom.add(quickMatchStatus);
         p.add(bottom, BorderLayout.SOUTH);
 
         challenge.addActionListener(e -> sendChallenge());
+        quickPlayButton.addActionListener(e -> toggleQuickMatch());
         ranking.addActionListener(e -> showRanking());
         profile.addActionListener(e -> showProfile(username));
         playerTable.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -248,6 +279,47 @@ public final class ClientMain {
             if (Boolean.TRUE.equals(p.get("ok"))) info("Đã gửi lời mời đến " + target + ".");
             else warn(String.valueOf(p.getOrDefault("message", "Không thể gửi lời mời.")));
         }));
+    }
+
+    private void toggleQuickMatch() {
+        boolean cancelling = quickMatchQueued;
+        quickPlayButton.setEnabled(false);
+        if (!cancelling) quickMatchStatus.setText("Đang kết nối tìm đối thủ...");
+        (cancelling ? challenges.cancelQuickMatch() : challenges.quickMatch())
+                .whenComplete((response, error) -> SwingUtilities.invokeLater(() -> {
+                    quickPlayButton.setEnabled(true);
+                    if (error != null) {
+                        quickMatchStatus.setText(cancelling && quickMatchQueued
+                                ? "Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận."
+                                : " ");
+                        warn("Không thể " + (cancelling ? "hủy tìm trận" : "tìm trận")
+                                + ": " + rootMessage(error));
+                        return;
+                    }
+                    Map<String, Object> body = payload(response);
+                    if (!Boolean.TRUE.equals(body.get("ok"))) {
+                        quickMatchStatus.setText(cancelling && quickMatchQueued
+                                ? "Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận."
+                                : " ");
+                        warn(String.valueOf(body.getOrDefault("message", "Không thể thực hiện yêu cầu.")));
+                        return;
+                    }
+                    if (cancelling) {
+                        quickMatchQueued = false;
+                        updateQuickPlayButton();
+                        quickMatchStatus.setText(" ");
+                    } else if (Boolean.TRUE.equals(body.get("queued"))
+                            && "lobby".equals(currentPage)) {
+                        quickMatchQueued = true;
+                        updateQuickPlayButton();
+                        quickMatchStatus.setText("Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận.");
+                    }
+                }));
+    }
+
+    private void updateQuickPlayButton() {
+        if (quickPlayButton != null)
+            quickPlayButton.setText(quickMatchQueued ? "Hủy tìm trận" : "Chơi ngay");
     }
 
     private void showRanking() {
@@ -398,6 +470,29 @@ public final class ClientMain {
     private void showCard(String name) {
         currentPage = name;
         cards.show(root, name);
+        if ("login".equals(name)) audio.stopMusic();
+        else if ("game".equals(name)) audio.setBattleMusic();
+        else if (!"preparation".equals(name)) audio.setLobbyMusic();
+    }
+
+    private JButton createSoundButton() {
+        JButton button = new JButton();
+        styleButton(button, false);
+        button.addActionListener(e -> {
+            audio.toggleMuted();
+            updateSoundButtons();
+        });
+        updateSoundButton(button);
+        return button;
+    }
+
+    private void updateSoundButtons() {
+        updateSoundButton(lobbySoundButton);
+        updateSoundButton(gameSoundButton);
+    }
+
+    private void updateSoundButton(JButton button) {
+        if (button != null) button.setText(audio.isMuted() ? "Bật âm thanh" : "Tắt âm thanh");
     }
 
     private static DefaultTableModel readOnlyModel(String... columns) {
@@ -491,12 +586,51 @@ public final class ClientMain {
 
     private static void styleBoardCell(JButton cell, boolean interactive) {
         cell.setForeground(CREAM);
-        cell.setBackground(new Color(12, 42, 57));
+        cell.setBackground(BOARD_WATER);
         cell.setOpaque(true);
         cell.setFocusPainted(false);
         cell.setBorder(BorderFactory.createLineBorder(new Color(115, 139, 144), 1));
         cell.setFont(cell.getFont().deriveFont(Font.BOLD, 13f));
         if (interactive) cell.setToolTipText("Chọn ô để bắn");
+    }
+
+    private static final class GameBoardCell extends JButton {
+        private boolean sunkGlow;
+
+        GameBoardCell() {
+            setOpaque(false);
+            setContentAreaFilled(false);
+        }
+
+        void setSunkGlow(boolean sunkGlow) {
+            this.sunkGlow = sunkGlow;
+            repaint();
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.setColor(getBackground());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                if (sunkGlow) {
+                    Point center = new Point(getWidth() / 2, getHeight() / 2);
+                    float radius = Math.max(1f, Math.max(getWidth(), getHeight()) * 0.8f);
+                    g.setPaint(new RadialGradientPaint(center, radius,
+                            new float[]{0f, 0.62f, 1f},
+                            new Color[]{new Color(230, 47, 42, 55),
+                                new Color(230, 47, 42, 105),
+                                new Color(230, 47, 42, 35)}));
+                    g.fillRect(0, 0, getWidth(), getHeight());
+                    g.setColor(new Color(255, 75, 65, 155));
+                    g.setStroke(new BasicStroke(2f));
+                    g.drawRoundRect(1, 1, Math.max(0, getWidth() - 3),
+                            Math.max(0, getHeight() - 3), 8, 8);
+                }
+            } finally {
+                g.dispose();
+            }
+            super.paintComponent(graphics);
+        }
     }
 
     private static void makeTransparent(JScrollPane scroll) {
@@ -565,19 +699,116 @@ public final class ClientMain {
             if ("INVITE_RECEIVED".equals(type)) {
                 String id = String.valueOf(p.get("challengeId"));
                 String inviter = String.valueOf(p.get("inviter"));
-                int choice = JOptionPane.showConfirmDialog(frame,
+                showStyledInviteDialog("LỜI MỜI THÁCH ĐẤU",
                         inviter + " muốn thách đấu với bạn.\nBạn có chấp nhận không?",
-                        "Lời mời thi đấu", JOptionPane.YES_NO_OPTION);
-                if (choice == JOptionPane.YES_OPTION)
-                    challenges.accept(id);
-                else
-                    challenges.reject(id);
+                        true, BRASS, accepted -> (accepted
+                                ? challenges.accept(id) : challenges.reject(id))
+                                .whenComplete((response, error) -> SwingUtilities.invokeLater(() -> {
+                                    if (error != null) {
+                                        warn("Không gửi được phản hồi lời mời: " + rootMessage(error));
+                                    } else {
+                                        Map<String, Object> body = payload(response);
+                                        if (!Boolean.TRUE.equals(body.get("ok"))) {
+                                            warn(String.valueOf(body.getOrDefault(
+                                                    "message", "Không gửi được phản hồi lời mời.")));
+                                        }
+                                    }
+                                })));
             } else if ("INVITE_REJECTED".equals(type)) {
-                info("Đối thủ đã từ chối lời mời.");
+                String opponent = String.valueOf(p.getOrDefault("opponent", "Đối thủ"));
+                showStyledInviteDialog("LỜI MỜI BỊ TỪ CHỐI",
+                        opponent + " đã từ chối lời thách đấu.", false,
+                        new Color(228, 111, 92), ignored -> {});
             } else if ("INVITE_CANCELLED".equals(type)) {
-                info("Lời mời đã bị hủy.");
+                showStyledInviteDialog("LỜI MỜI ĐÃ HỦY",
+                        "Lời mời thách đấu đã bị hủy.", false,
+                        new Color(211, 181, 116), ignored -> {});
             }
         });
+    }
+
+    private void showStyledInviteDialog(String title, String message, boolean confirm,
+            Color accent, java.util.function.Consumer<Boolean> onChoice) {
+        JDialog dialog = new JDialog(frame, title, true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel glow = new JPanel(new GridBagLayout()) {
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                paintGlowBackground(graphics, this, accent, 150);
+            }
+        };
+        glow.setOpaque(false);
+        glow.setBackground(new Color(3, 10, 20, 225));
+
+        JPanel card = new JPanel(new BorderLayout(12, 18));
+        card.setPreferredSize(new Dimension(520, confirm ? 300 : 250));
+        card.setBackground(new Color(8, 22, 34, 248));
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(accent, 2),
+                BorderFactory.createEmptyBorder(24, 34, 24, 34)));
+
+        JLabel heading = new JLabel(title, SwingConstants.CENTER);
+        heading.setForeground(accent);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, 25f));
+        heading.setBorder(BorderFactory.createEmptyBorder(2, 4, 8, 4));
+        JTextArea description = new JTextArea(message);
+        description.setEditable(false);
+        description.setFocusable(false);
+        description.setOpaque(false);
+        description.setForeground(CREAM);
+        description.setFont(description.getFont().deriveFont(Font.PLAIN, 19f));
+        description.setLineWrap(true);
+        description.setWrapStyleWord(true);
+        description.setAlignmentX(Component.CENTER_ALIGNMENT);
+        JPanel text = new JPanel(new BorderLayout(8, 8));
+        text.setOpaque(false);
+        text.add(heading, BorderLayout.NORTH);
+        text.add(description, BorderLayout.CENTER);
+        card.add(text, BorderLayout.CENTER);
+
+        JButton primary = new JButton(confirm ? "CHẤP NHẬN" : "ĐÃ HIỂU");
+        styleButton(primary, true);
+        primary.setFont(primary.getFont().deriveFont(Font.BOLD, 15f));
+        JButton secondary = confirm ? new JButton("TỪ CHỐI") : null;
+        if (secondary != null) {
+            styleButton(secondary, false);
+            secondary.setFont(secondary.getFont().deriveFont(Font.BOLD, 15f));
+        }
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.CENTER, 18, 0));
+        actions.setOpaque(false);
+        if (secondary != null) actions.add(secondary);
+        actions.add(primary);
+        card.add(actions, BorderLayout.SOUTH);
+        glow.add(card);
+        dialog.setContentPane(glow);
+
+        boolean[] responded = {false};
+        java.util.function.Consumer<Boolean> finish = accepted -> {
+            if (responded[0]) return;
+            responded[0] = true;
+            dialog.dispose();
+            onChoice.accept(accepted);
+        };
+        primary.addActionListener(e -> finish.accept(confirm));
+        if (secondary != null) secondary.addActionListener(e -> finish.accept(false));
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosing(java.awt.event.WindowEvent e) {
+                if (confirm) finish.accept(false);
+            }
+        });
+
+        javax.swing.Timer glowTimer = new javax.swing.Timer(55, e -> glow.repaint());
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosed(java.awt.event.WindowEvent e) {
+                glowTimer.stop();
+            }
+        });
+        dialog.pack();
+        dialog.setMinimumSize(new Dimension(560, confirm ? 340 : 290));
+        dialog.setLocationRelativeTo(frame);
+        glowTimer.start();
+        dialog.setVisible(true);
     }
 
     private void handleMatch(Map<String, Object> m) {
@@ -585,8 +816,14 @@ public final class ClientMain {
         Map<String, Object> p = payload(m);
         SwingUtilities.invokeLater(() -> {
             if ("MATCH_START".equals(type)) {
+                quickMatchQueued = false;
+                updateQuickPlayButton();
+                quickMatchStatus.setText(" ");
+                audio.playMatchFound();
+                closeGameDialog();
                 currentMatchId = String.valueOf(p.get("matchId"));
-                showPreparation(String.valueOf(p.get("opponent")));
+                currentOpponent = String.valueOf(p.get("opponent"));
+                showPreparation(currentOpponent);
             } else if ("MATCH_PLAYING".equals(type)) {
                 // The game window is opened by GAME_STARTED; no popup is needed here.
             } else if ("OPPONENT_READY".equals(type)) {
@@ -595,19 +832,27 @@ public final class ClientMain {
             } else if ("OPPONENT_LEFT".equals(type)) {
                 // MATCH_END follows with the final result and a single result popup.
             } else if ("MATCH_END".equals(type)) {
-                closeGameDialog();
-                preparationPanel = null;
-                preparationStatus = null;
-                currentMatchId = null;
+                quickMatchQueued = false;
+                updateQuickPlayButton();
+                quickMatchStatus.setText(" ");
                 String result = String.valueOf(p.getOrDefault("result", ""));
                 String winner = String.valueOf(p.getOrDefault("winner", ""));
-                String outcome = "WIN".equalsIgnoreCase(result) ? "Bạn đã thắng!"
-                        : "LOSS".equalsIgnoreCase(result) ? "Bạn đã thua."
-                        : "Trận đấu kết thúc hòa.";
-                String winnerText = winner.isBlank() ? "Không có người thắng."
-                        : "Người thắng: " + winner + ".";
-                showCard("lobby");
-                info(outcome + "\n" + winnerText + "\nLý do: " + formatEndReason(p.get("reason")));
+                if ("game".equals(currentPage) && gamePanel != null) {
+                    gameEnded = true;
+                    myTurn = false;
+                    if (countdownTimer != null) countdownTimer.stop();
+                    updateGameStatus();
+                    currentMatchId = null;
+                    showGameResult(result, winner, p.get("reason"));
+                } else {
+                    closeGameDialog();
+                    preparationPanel = null;
+                    preparationStatus = null;
+                    currentMatchId = null;
+                    currentOpponent = null;
+                    showCard("lobby");
+                    info("Trận đấu đã kết thúc. Lý do: " + formatEndReason(p.get("reason")));
+                }
                 requestLobby();
             }
         });
@@ -739,6 +984,7 @@ public final class ClientMain {
         exit.addActionListener(e -> {
             challenges.exitMatch();
             currentMatchId = null;
+            currentOpponent = null;
             preparationPanel = null;
             preparationStatus = null;
             requestLobby();
@@ -772,11 +1018,16 @@ public final class ClientMain {
         } else if ("OPPONENT_SHOT".equals(type)) {
             if (!"game".equals(currentPage) || gamePanel == null) return;
             int row = number(p.get("row")), col = number(p.get("col"));
+            String result = String.valueOf(p.get("result"));
+            playShotResult(result);
             if (inside(row, col)) {
-                String result = String.valueOf(p.get("result"));
-                ownCells[row][col].setText(cellLabel(result, true));
+                setCellResult(ownCells[row][col], result, true);
                 ownCells[row][col].setEnabled(false);
-                if ("SUNK".equals(result)) revealSunkShip(p.get("sunkCells"), number(p.get("shipLength")), true);
+                if ("SUNK".equals(result)) {
+                    int shipLength = number(p.get("shipLength"));
+                    revealSunkShip(p.get("sunkCells"), shipLength, true);
+                    showSunkShipFeedback(shipLength);
+                }
             }
             myTurn = Boolean.TRUE.equals(p.get("yourTurn"));
             updateGameStatus();
@@ -795,6 +1046,8 @@ public final class ClientMain {
     private void showGame(Map<String, Object> data) {
         closeGameDialog();
         gameEnded = false;
+        resultOverlay = null;
+        resultMessage = null;
         secondsLeft = number(data.get("secondsPerTurn"));
         for (int r = 0; r < 6; r++) java.util.Arrays.fill(enemyShots[r], false);
         ownCells = new JButton[6][6];
@@ -804,6 +1057,16 @@ public final class ClientMain {
         gameStatus.setFont(gameStatus.getFont().deriveFont(Font.BOLD, 15f));
         turnCountdown = new JLabel("", SwingConstants.CENTER);
         turnCountdown.setForeground(BRASS);
+        sunkShipBanner = new JLabel("TÀU ĐÃ BỊ PHÁ HỦY", SwingConstants.CENTER);
+        sunkShipBanner.setForeground(new Color(255, 111, 82));
+        sunkShipBanner.setFont(sunkShipBanner.getFont().deriveFont(Font.BOLD, 22f));
+        sunkShipBanner.setOpaque(true);
+        sunkShipBanner.setBackground(new Color(27, 17, 17, 220));
+        sunkShipBanner.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(210, 66, 47), 2),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+        sunkShipBanner.setVisible(false);
+        sunkShipImage = new JLabel("", SwingConstants.CENTER);
 
         JPanel boards = new JPanel(new GridLayout(1, 2, 18, 8));
         boards.setOpaque(false);
@@ -812,10 +1075,12 @@ public final class ClientMain {
 
         JButton exit = new JButton("Thoát trận");
         styleButton(exit, true);
+        gameSoundButton = createSoundButton();
         exit.addActionListener(e -> {
             if (currentMatchId != null) challenges.exitMatch();
             closeGameDialog();
             currentMatchId = null;
+            currentOpponent = null;
             showCard("lobby");
             requestLobby();
         });
@@ -827,11 +1092,29 @@ public final class ClientMain {
         statusPanel.add(gameStatus);
         statusPanel.add(turnCountdown);
         bottom.add(statusPanel, BorderLayout.CENTER);
-        bottom.add(exit, BorderLayout.EAST);
+        JPanel gameButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        gameButtons.setOpaque(false);
+        gameButtons.add(gameSoundButton);
+        gameButtons.add(exit);
+        bottom.add(gameButtons, BorderLayout.EAST);
         gameContent.add(boards, BorderLayout.CENTER);
         gameContent.add(bottom, BorderLayout.SOUTH);
         gamePanel = gameContent;
-        showPage("game", gameContent);
+        gameLayers = new JLayeredPane();
+        gameLayers.setLayout(null);
+        gameLayers.add(gameContent, JLayeredPane.DEFAULT_LAYER);
+        sunkShipOverlay = createSunkShipOverlay();
+        sunkShipOverlay.setVisible(false);
+        gameLayers.add(sunkShipOverlay, JLayeredPane.PALETTE_LAYER);
+        JPanel gamePage = new JPanel(new BorderLayout());
+        gamePage.add(gameLayers, BorderLayout.CENTER);
+        gameLayers.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                layoutGameLayers();
+            }
+        });
+        showPage("game", gamePage);
+        layoutGameLayers();
         countdownTimer = new javax.swing.Timer(1000, e -> {
             if (secondsLeft > 0) secondsLeft--;
             updateGameStatus();
@@ -849,11 +1132,17 @@ public final class ClientMain {
         for (int r = 0; r < 6; r++) {
             for (int c = 0; c < 6; c++) {
                 final int row = r, col = c;
-                JButton cell = new JButton();
+                GameBoardCell cell = new GameBoardCell();
                 styleBoardCell(cell, attackBoard);
+                cell.setOpaque(false);
+                cell.setContentAreaFilled(false);
                 cell.setMargin(new Insets(2, 2, 2, 2));
                 char value = encoded.length() == 36 ? encoded.charAt(r * 6 + c) : '0';
                 cell.setText(attackBoard ? "" : ownCellLabel(value));
+                if (!attackBoard) {
+                    if (value == '1') cell.setBackground(BOARD_SHIP);
+                    else if (value == '3') setCellResult(cell, "HIT", true);
+                }
                 cell.setEnabled(attackBoard && myTurn && !gameEnded);
                 if (attackBoard) {
                     cell.addActionListener(e -> fireShot(row, col));
@@ -870,6 +1159,7 @@ public final class ClientMain {
 
     private void fireShot(int row, int col) {
         if (!myTurn || gameEnded || currentMatchId == null || enemyShots[row][col]) return;
+        audio.playCannonShot();
         myTurn = false;
         updateGameStatus();
         for (JButton[] line : enemyCells) for (JButton b : line) b.setEnabled(false);
@@ -891,13 +1181,232 @@ public final class ClientMain {
                     }
                     enemyShots[row][col] = true;
                     String shotResult = String.valueOf(p.get("result"));
-                    enemyCells[row][col].setText(cellLabel(shotResult, false));
+                    playShotResult(shotResult);
+                    setCellResult(enemyCells[row][col], shotResult, false);
                     enemyCells[row][col].setEnabled(false);
-                    if ("SUNK".equals(shotResult)) revealSunkShip(p.get("sunkCells"), number(p.get("shipLength")), false);
+                    if ("SUNK".equals(shotResult)) {
+                        revealSunkShip(p.get("sunkCells"), number(p.get("shipLength")), false);
+                        showSunkShipFeedback(number(p.get("shipLength")));
+                    }
                     myTurn = Boolean.TRUE.equals(p.get("yourTurn"));
                     secondsLeft = number(p.get("secondsLeft"));
                     updateGameStatus();
                 }));
+    }
+
+    private void playShotResult(String result) {
+        if ("SUNK".equals(result)) audio.playShipSunk();
+        else audio.playImpact("HIT".equals(result));
+    }
+
+    private void setCellResult(JButton cell, String result, boolean ownBoard) {
+        cell.setText("");
+        if (!(cell instanceof GameBoardCell boardCell)) return;
+        if (ownBoard) {
+            boardCell.setBackground("HIT".equals(result) || "SUNK".equals(result)
+                    ? BOARD_MISS : BOARD_WATER);
+        } else {
+            boardCell.setBackground("HIT".equals(result) || "SUNK".equals(result)
+                    ? BOARD_HIT : BOARD_MISS);
+        }
+        boardCell.repaint();
+    }
+
+    private void showSunkShipFeedback(int shipLength) {
+        if (sunkShipOverlay == null || sunkShipBanner == null || sunkShipImage == null) return;
+        if (sunkShipBannerTimer != null) sunkShipBannerTimer.stop();
+        BufferedImage ship = shipImages.get(shipLength);
+        if (ship != null) {
+            double scale = Math.min(360.0 / ship.getWidth(), 140.0 / ship.getHeight());
+            sunkShipImage.setIcon(new ImageIcon(ship.getScaledInstance(
+                    Math.max(1, (int) (ship.getWidth() * scale)),
+                    Math.max(1, (int) (ship.getHeight() * scale)), Image.SCALE_SMOOTH)));
+        } else {
+            sunkShipImage.setIcon(null);
+        }
+        sunkShipOverlay.setVisible(true);
+        long shownAt = System.currentTimeMillis();
+        sunkShipBanner.setVisible(true);
+        sunkShipBannerTimer = new javax.swing.Timer(45, e -> {
+            sunkShipOverlay.repaint();
+            if (System.currentTimeMillis() - shownAt >= 2200) {
+                sunkShipOverlay.setVisible(false);
+                sunkShipBannerTimer.stop();
+                sunkShipBannerTimer = null;
+            }
+        });
+        sunkShipBannerTimer.start();
+    }
+
+    private JPanel createSunkShipOverlay() {
+        JPanel overlay = new JPanel(new GridBagLayout()) {
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                paintGlowBackground(graphics, this, new Color(255, 115, 64), 190);
+            }
+        };
+        overlay.setOpaque(false);
+        overlay.setBackground(new Color(3, 10, 20, 220));
+        JPanel card = new JPanel();
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBackground(new Color(8, 22, 34, 245));
+        card.setPreferredSize(new Dimension(460, 260));
+        card.setBorder(BorderFactory.createEmptyBorder(16, 24, 16, 24));
+        sunkShipBanner.setFont(sunkShipBanner.getFont().deriveFont(Font.BOLD, 22f));
+        sunkShipImage.setAlignmentX(Component.CENTER_ALIGNMENT);
+        sunkShipBanner.setAlignmentX(Component.CENTER_ALIGNMENT);
+        card.add(sunkShipImage);
+        card.add(Box.createVerticalStrut(10));
+        card.add(sunkShipBanner);
+        overlay.add(card);
+        return overlay;
+    }
+
+    private void showGameResult(String result, String winner, Object reason) {
+        if (gameLayers == null || gamePanel == null) return;
+        if (sunkShipBannerTimer != null) {
+            sunkShipBannerTimer.stop();
+            sunkShipBannerTimer = null;
+        }
+        if (sunkShipOverlay != null) sunkShipOverlay.setVisible(false);
+        if (resultGlowTimer != null) resultGlowTimer.stop();
+        if (resultOverlay != null) gameLayers.remove(resultOverlay);
+
+        boolean won = "WIN".equalsIgnoreCase(result)
+                || (username != null && username.equalsIgnoreCase(winner));
+        String title = won ? "WINNER" : "LOSER";
+        if (!won && (winner == null || winner.isBlank())
+                && ("DRAW".equalsIgnoreCase(result) || "ABANDONED".equalsIgnoreCase(result))) {
+            title = "DRAW";
+        }
+        JPanel overlay = new JPanel(new GridBagLayout()) {
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                paintGlowBackground(graphics, this, Color.WHITE, 205);
+            }
+        };
+        overlay.setOpaque(false);
+        overlay.setBackground(new Color(3, 10, 20, 235));
+
+        JPanel card = new JPanel(new BorderLayout(12, 18));
+        card.setBackground(new Color(7, 19, 32, 248));
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(241, 247, 255), 2),
+                BorderFactory.createEmptyBorder(24, 34, 24, 34)));
+        JLabel heading = new JLabel(title, SwingConstants.CENTER);
+        heading.setForeground(Color.WHITE);
+        heading.setFont(heading.getFont().deriveFont(Font.BOLD, 48f));
+        heading.setBorder(BorderFactory.createEmptyBorder(0, 12, 2, 12));
+        JLabel opponentLabel = new JLabel(
+                currentOpponent == null || currentOpponent.isBlank() ? "Trận đấu đã kết thúc"
+                        : "Đối thủ: " + currentOpponent,
+                SwingConstants.CENTER);
+        opponentLabel.setForeground(CREAM);
+        opponentLabel.setFont(opponentLabel.getFont().deriveFont(Font.PLAIN, 15f));
+        JPanel titlePanel = new JPanel(new GridLayout(2, 1, 4, 4));
+        titlePanel.setOpaque(false);
+        titlePanel.add(heading);
+        titlePanel.add(opponentLabel);
+        card.add(titlePanel, BorderLayout.NORTH);
+
+        resultMessage = new JLabel(" ", SwingConstants.CENTER);
+        resultMessage.setForeground(BRASS);
+        resultMessage.setFont(resultMessage.getFont().deriveFont(Font.BOLD, 14f));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 0));
+        actions.setOpaque(false);
+        JButton rematch = new JButton("THÁCH ĐẤU LẠI");
+        JButton home = new JButton("TRANG CHỦ");
+        styleButton(rematch, true);
+        styleButton(home, false);
+        actions.add(rematch);
+        actions.add(home);
+        JPanel lower = new JPanel(new BorderLayout(8, 12));
+        lower.setOpaque(false);
+        lower.add(resultMessage, BorderLayout.NORTH);
+        lower.add(actions, BorderLayout.CENTER);
+        card.add(lower, BorderLayout.SOUTH);
+
+        rematch.addActionListener(e -> {
+            String opponent = currentOpponent;
+            if (opponent == null || opponent.isBlank()) {
+                resultMessage.setText("Không tìm thấy đối thủ để thách đấu lại.");
+                return;
+            }
+            rematch.setEnabled(false);
+            resultMessage.setText("Đang gửi lời thách đấu...");
+            challenges.invite(opponent).whenComplete((response, error) ->
+                    SwingUtilities.invokeLater(() -> {
+                        if (resultOverlay != overlay) return;
+                        if (error != null) {
+                            resultMessage.setText("Không gửi được lời mời: " + rootMessage(error));
+                            rematch.setEnabled(true);
+                            return;
+                        }
+                        Map<String, Object> body = payload(response);
+                        if (Boolean.TRUE.equals(body.get("ok"))) {
+                            resultMessage.setText("Đã gửi lời mời. Đang chờ đối thủ phản hồi...");
+                        } else {
+                            resultMessage.setText(String.valueOf(body.getOrDefault(
+                                    "message", "Không gửi được lời mời.")));
+                            rematch.setEnabled(true);
+                        }
+                    }));
+        });
+        home.addActionListener(e -> {
+            closeGameDialog();
+            currentMatchId = null;
+            currentOpponent = null;
+            showCard("lobby");
+            requestLobby();
+        });
+
+        overlay.add(card);
+        resultOverlay = overlay;
+        gameLayers.add(resultOverlay, JLayeredPane.MODAL_LAYER);
+        layoutGameLayers();
+        resultOverlay.setVisible(true);
+        resultGlowTimer = new javax.swing.Timer(55, e -> {
+            if (resultOverlay != null) resultOverlay.repaint();
+        });
+        resultGlowTimer.start();
+        if (reason != null && !String.valueOf(reason).isBlank()) {
+            resultMessage.setToolTipText(formatEndReason(reason));
+        }
+    }
+
+    private static void paintGlowBackground(Graphics graphics, JComponent component,
+            Color glowColor, int maxAlpha) {
+        Graphics2D g = (Graphics2D) graphics.create();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(new Color(3, 10, 20, 198));
+            g.fillRect(0, 0, component.getWidth(), component.getHeight());
+            float pulse = 0.72f + 0.28f
+                    * (float) Math.sin(System.nanoTime() / 350_000_000.0);
+            int alpha = Math.max(0, Math.min(255, (int) (maxAlpha * pulse)));
+            float radius = Math.max(component.getWidth(), component.getHeight()) * 0.72f;
+            Point center = new Point(component.getWidth() / 2, component.getHeight() / 2);
+            g.setPaint(new RadialGradientPaint(center, Math.max(1f, radius),
+                    new float[]{0f, 0.42f, 1f},
+                    new Color[]{new Color(glowColor.getRed(), glowColor.getGreen(),
+                            glowColor.getBlue(), alpha),
+                        new Color(glowColor.getRed(), glowColor.getGreen(),
+                            glowColor.getBlue(), alpha / 3),
+                        new Color(glowColor.getRed(), glowColor.getGreen(),
+                            glowColor.getBlue(), 0)}));
+            g.fillRect(0, 0, component.getWidth(), component.getHeight());
+        } finally {
+            g.dispose();
+        }
+    }
+
+    private void layoutGameLayers() {
+        if (gameLayers == null) return;
+        for (Component component : gameLayers.getComponents()) {
+            component.setBounds(0, 0, gameLayers.getWidth(), gameLayers.getHeight());
+        }
+        gameLayers.revalidate();
+        gameLayers.repaint();
     }
 
     private void updateGameStatus() {
@@ -929,19 +1438,7 @@ public final class ClientMain {
     }
 
     private String ownCellLabel(char value) {
-        return switch (value) {
-            case '2' -> "MISS";
-            case '3' -> "HIT";
-            default -> ""; // Tàu không lộ diện cho đến khi bị đánh chìm
-        };
-    }
-
-    private String cellLabel(String result, boolean ownBoard) {
-        return switch (result) {
-            case "MISS" -> "MISS";
-            case "HIT", "SUNK" -> "HIT";
-            default -> "";
-        };
+        return value == '1' ? "■" : "";
     }
 
     private void loadShipImages() {
@@ -978,9 +1475,6 @@ public final class ClientMain {
         points.sort((a, b) -> a.x == b.x ? Integer.compare(a.y, b.y) : Integer.compare(a.x, b.x));
         boolean horizontal = points.stream().allMatch(pt -> pt.x == points.get(0).x);
         BufferedImage oriented = horizontal ? rotateShipImage(source) : source;
-        int targetLength = horizontal ? points.stream().mapToInt(pt -> pt.y).max().orElse(0)
-                - points.stream().mapToInt(pt -> pt.y).min().orElse(0) + 1
-                : points.size();
         int cellW = Math.max(1, (int) (enemyCells != null ? enemyCells[0][0].getWidth() : 48));
         int cellH = Math.max(1, (int) (enemyCells != null ? enemyCells[0][0].getHeight() : 48));
         for (Point pt : points) {
@@ -993,13 +1487,8 @@ public final class ClientMain {
                     : (enemyCells != null ? enemyCells[pt.x][pt.y] : null);
             if (cell != null) {
                 cell.setIcon(new ImageIcon(scaled));
-                if ("HIT".equals(cell.getText())) {
-                    cell.setHorizontalTextPosition(SwingConstants.CENTER);
-                    cell.setVerticalTextPosition(SwingConstants.CENTER);
-                    cell.setForeground(new Color(255, 96, 73));
-                    cell.setFont(cell.getFont().deriveFont(Font.BOLD, 10f));
-                }
                 cell.setDisabledIcon(new ImageIcon(scaled));
+                if (cell instanceof GameBoardCell boardCell) boardCell.setSunkGlow(true);
                 cell.repaint();
             }
         }
@@ -1034,13 +1523,23 @@ public final class ClientMain {
     private static boolean inside(int row, int col) { return row >= 0 && row < 6 && col >= 0 && col < 6; }
 
     private void closeGameDialog() {
+        if (sunkShipBannerTimer != null) {
+            sunkShipBannerTimer.stop();
+            sunkShipBannerTimer = null;
+        }
         if (countdownTimer != null) {
             countdownTimer.stop();
             countdownTimer = null;
         }
+        if (resultGlowTimer != null) {
+            resultGlowTimer.stop();
+            resultGlowTimer = null;
+        }
         if (gamePanel != null) {
-            root.remove(gamePanel);
+            Component gamePage = findCard("game");
+            if (gamePage != null) root.remove(gamePage);
             gamePanel = null;
+            gameLayers = null;
             root.revalidate();
             root.repaint();
         }
@@ -1048,6 +1547,12 @@ public final class ClientMain {
         enemyCells = null;
         gameStatus = null;
         turnCountdown = null;
+        sunkShipBanner = null;
+        sunkShipImage = null;
+        sunkShipOverlay = null;
+        resultOverlay = null;
+        resultMessage = null;
+        gameSoundButton = null;
     }
 
     private void requestLobby() {
@@ -1073,6 +1578,7 @@ public final class ClientMain {
     private String statusLabel(String s) {
         return switch (s) {
             case "IDLE" -> "Online";
+            case "QUEUED" -> "Đang tìm trận";
             case "PLAYING" -> "Trong trận";
             default -> "Offline";
         };
@@ -1080,6 +1586,7 @@ public final class ClientMain {
 
     private void logout() {
         if (client == null) {
+            currentOpponent = null;
             showLogin();
             return;
         }
@@ -1087,11 +1594,16 @@ public final class ClientMain {
                 SwingUtilities.invokeLater(() -> {
                     username = null;
                     currentMatchId = null;
+                    currentOpponent = null;
                     showLogin();
                 }));
     }
 
     private void showLogin() {
+        quickMatchQueued = false;
+        currentOpponent = null;
+        if (quickMatchStatus != null) quickMatchStatus.setText(" ");
+        updateQuickPlayButton();
         showCard("login");
         model.setRowCount(0);
     }

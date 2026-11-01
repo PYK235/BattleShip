@@ -5,7 +5,25 @@ import java.util.Map;
 public final class MatchRoute {
     private MatchRoute() {}
 
-    public static void register(BattleShipServer server, ChallengeManager challenges, MatchManager matches) {
+    public static void register(BattleShipServer server, ChallengeManager challenges,
+            MatchManager matches, QuickMatchManager quickMatches) {
+        server.registerRoute("QUICK_MATCH", (client, id, p) -> {
+            try {
+                boolean queued = quickMatches.join(client.getUser().getUsername());
+                client.send("QUICK_MATCH_RESULT", id, Map.of("ok", true, "queued", queued));
+            } catch (RuntimeException e) {
+                client.send("QUICK_MATCH_RESULT", id, Map.of("ok", false, "message", e.getMessage()));
+            }
+        });
+        server.registerRoute("QUICK_MATCH_CANCEL", (client, id, p) -> {
+            try {
+                boolean cancelled = quickMatches.leave(client.getUser().getUsername());
+                client.send("QUICK_MATCH_CANCEL_RESULT", id,
+                        Map.of("ok", true, "cancelled", cancelled));
+            } catch (RuntimeException e) {
+                client.send("QUICK_MATCH_CANCEL_RESULT", id, Map.of("ok", false, "message", e.getMessage()));
+            }
+        });
         server.registerRoute("INVITE", (client, id, p) -> {
             try {
                 Challenge c = challenges.create(client.getUser().getUsername(), str(p, "targetUsername"));

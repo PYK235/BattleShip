@@ -46,6 +46,12 @@ ant run-client
 ```
 Hoặc chạy `run-server.bat` / `run-client.bat` trên Windows sau khi đã build. Trong NetBeans, có thể nhấp phải `ServerMain.java` hoặc `ClientMain.java` > Run File sau khi đã thêm Connector/J vào Libraries.
 
+## Chơi nhanh
+Trong Lobby, nhấn **Chơi ngay** để vào hàng chờ ghép trận. Server ghép hai người theo thứ tự vào hàng; khi chưa có đối thủ, nút đổi thành **Hủy tìm trận** để rời hàng chờ. Người chơi được ghép sẽ vào màn hình chuẩn bị trận như khi chấp nhận lời thách đấu.
+
+## Âm thanh
+Client tự tạo nhạc nền vui nhẹ ở Lobby, âm báo ghép trận/thách đấu thành công riêng và nhạc nền kịch tính trong trận, thỉnh thoảng chen tiếng nổ. Mỗi lần chọn ô bắn có tiếng pháo; khi tàu chìm sẽ có tiếng nổ lớn hơn, hình tàu bị chìm và thông báo **TÀU ĐÃ BỊ PHÁ HỦY** trong 2 giây. Nhấn **Tắt âm thanh** hoặc **Bật âm thanh** ở Lobby/trong trận để điều khiển âm thanh. Không cần cài thêm thư viện hay tải file nhạc.
+
 ## 6. Client ở máy khác
 Trên máy client đặt IP của máy chạy Java Server (không phải IP MySQL):
 ```powershell

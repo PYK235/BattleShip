@@ -11,6 +11,7 @@ public final class BattleShipServer {
     private final ExecutorService pool = Executors.newCachedThreadPool();
     private final ConcurrentMap<String, MessageRoute> routes = new ConcurrentHashMap<>();
     private MatchManager matches;
+    private QuickMatchManager quickMatches;
 
     public BattleShipServer(UserDAO dao) {
         this.dao = dao;
@@ -20,6 +21,8 @@ public final class BattleShipServer {
     public UserDAO getDao() { return dao; }
     public MatchManager getMatches() { return matches; }
     public void setMatches(MatchManager matches) { this.matches = matches; }
+    public QuickMatchManager getQuickMatches() { return quickMatches; }
+    public void setQuickMatches(QuickMatchManager quickMatches) { this.quickMatches = quickMatches; }
     public void registerRoute(String messageType, MessageRoute route) { routes.put(messageType, route); }
     boolean dispatch(String type, ClientHandler client, String requestId, Map<String, Object> payload) {
         MessageRoute route = routes.get(type);

@@ -6,9 +6,11 @@ public final class ServerMain {
         BattleShipServer server = new BattleShipServer(new MySqlUserDAO());
         MatchDAO matchDAO = new MySqlMatchDAO();
         MatchManager matches = new MatchManager(server, matchDAO);
+        QuickMatchManager quickMatches = new QuickMatchManager(server, matches);
         ChallengeManager challenges = new ChallengeManager(server);
         server.setMatches(matches);
-        MatchRoute.register(server, challenges, matches);
+        server.setQuickMatches(quickMatches);
+        MatchRoute.register(server, challenges, matches, quickMatches);
         GameRoute.register(server, matches);
         server.start(port);
     }

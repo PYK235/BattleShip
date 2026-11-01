@@ -31,6 +31,8 @@ public final class ClientHandler implements Runnable {
             }
         } catch (IOException ignored) {
         } finally {
+            if (user != null && server.getQuickMatches() != null)
+                server.getQuickMatches().leave(user.getUsername());
             if (user != null && server.getMatches() != null)
                 server.getMatches().playerLeft(user.getUsername(), "DISCONNECTED");
             server.getUsers().logout(this);
@@ -63,6 +65,8 @@ public final class ClientHandler implements Runnable {
                 else send("LOBBY_RESULT", id, Map.of("users", server.getUsers().lobby()));
                 break;
             case "LOGOUT":
+                if (server.getQuickMatches() != null && user != null)
+                    server.getQuickMatches().leave(user.getUsername());
                 if (server.getMatches() != null && user != null)
                     server.getMatches().playerLeft(user.getUsername(), "LOGOUT");
                 server.getUsers().logout(this);

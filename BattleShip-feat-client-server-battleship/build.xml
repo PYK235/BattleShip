@@ -21,7 +21,7 @@
     </target>
 
     <target name="compile" depends="init">
-        <javac srcdir="${src.dir}" destdir="${classes.dir}" encoding="UTF-8" source="17" target="17" includeantruntime="false" debug="true">
+        <javac srcdir="${src.dir}" destdir="${classes.dir}" encoding="UTF-8" source="17" target="17" includeantruntime="false" includeDestClasses="false" debug="true">
             <classpath refid="project.classpath"/>
         </javac>
         <copy todir="${classes.dir}">

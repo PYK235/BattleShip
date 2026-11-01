@@ -36,6 +36,13 @@ public final class UserManager {
         return true;
     }
 
+    public synchronized boolean transitionStatus(String username, User.Status expected, User.Status status) {
+        ClientHandler session = session(username);
+        if (session == null || session.getUser() == null || session.getUser().getStatus() != expected) return false;
+        session.getUser().setStatus(status);
+        return true;
+    }
+
     public synchronized User currentUser(String username) {
         ClientHandler session = session(username);
         return session != null ? session.getUser() : dao.find(username);

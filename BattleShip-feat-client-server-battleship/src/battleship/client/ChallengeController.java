@@ -18,6 +18,14 @@ public final class ChallengeController {
         return client.request("INVITE", Map.of("targetUsername", targetUsername));
     }
 
+    public CompletableFuture<Map<String, Object>> quickMatch() {
+        return client.request("QUICK_MATCH", Map.of());
+    }
+
+    public CompletableFuture<Map<String, Object>> cancelQuickMatch() {
+        return client.request("QUICK_MATCH_CANCEL", Map.of());
+    }
+
     public CompletableFuture<Map<String, Object>> accept(String challengeId) {
         return client.request("ACCEPT", Map.of("challengeId", challengeId));
     }

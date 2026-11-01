@@ -1,7 +1,7 @@
 package battleship.server;
 
 public final class User {
-    public enum Status { OFFLINE, IDLE, PLAYING }
+    public enum Status { OFFLINE, IDLE, QUEUED, PLAYING }
     private final String username; private volatile Status status = Status.OFFLINE;
     private volatile int totalScore, wins, losses, matches;
     public User(String username,int score,int wins,int losses,int matches){this.username=username;this.totalScore=score;this.wins=wins;this.losses=losses;this.matches=matches;}
