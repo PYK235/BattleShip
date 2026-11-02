@@ -46,7 +46,9 @@ public final class ClientMain {
     private JPanel sunkShipOverlay;
     private JPanel resultOverlay;
     private JLabel resultMessage;
-    private JLabel quickMatchStatus;
+    private JDialog quickMatchDialog;
+    private JLabel quickMatchDialogStatus;
+    private JButton quickMatchDialogCancel;
     private JButton[][] ownCells;
     private JButton[][] enemyCells;
     private JLabel gameStatus;
@@ -154,10 +156,7 @@ public final class ClientMain {
         styleButton(profile, false);
         styleButton(refresh, false);
         styleButton(logout, false);
-        quickMatchStatus = new JLabel(" ", SwingConstants.CENTER);
-        quickMatchStatus.setForeground(BRASS);
-        quickMatchStatus.setFont(quickMatchStatus.getFont().deriveFont(Font.BOLD, 13f));
-        JPanel bottom = new JPanel(new GridLayout(3, 1));
+        JPanel bottom = new JPanel(new GridLayout(2, 1));
         bottom.setOpaque(false);
         JPanel social = new JPanel(new FlowLayout(FlowLayout.CENTER));
         social.setOpaque(false);
@@ -172,7 +171,6 @@ public final class ClientMain {
         session.add(logout);
         bottom.add(social);
         bottom.add(session);
-        bottom.add(quickMatchStatus);
         p.add(bottom, BorderLayout.SOUTH);
 
         challenge.addActionListener(e -> sendChallenge());
@@ -284,37 +282,119 @@ public final class ClientMain {
     private void toggleQuickMatch() {
         boolean cancelling = quickMatchQueued;
         quickPlayButton.setEnabled(false);
-        if (!cancelling) quickMatchStatus.setText("Đang kết nối tìm đối thủ...");
+        if (!cancelling) showQuickMatchDialog("Đang kết nối tìm đối thủ...", false);
+        else updateQuickMatchDialog("Đang hủy tìm trận...", false);
         (cancelling ? challenges.cancelQuickMatch() : challenges.quickMatch())
                 .whenComplete((response, error) -> SwingUtilities.invokeLater(() -> {
                     quickPlayButton.setEnabled(true);
                     if (error != null) {
-                        quickMatchStatus.setText(cancelling && quickMatchQueued
-                                ? "Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận."
-                                : " ");
+                        if (cancelling && quickMatchQueued) {
+                            updateQuickMatchDialog("Đang tìm đối thủ...", true);
+                        } else {
+                            closeQuickMatchDialog();
+                        }
                         warn("Không thể " + (cancelling ? "hủy tìm trận" : "tìm trận")
                                 + ": " + rootMessage(error));
                         return;
                     }
                     Map<String, Object> body = payload(response);
                     if (!Boolean.TRUE.equals(body.get("ok"))) {
-                        quickMatchStatus.setText(cancelling && quickMatchQueued
-                                ? "Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận."
-                                : " ");
+                        if (cancelling && quickMatchQueued) {
+                            updateQuickMatchDialog("Đang tìm đối thủ...", true);
+                        } else {
+                            closeQuickMatchDialog();
+                        }
                         warn(String.valueOf(body.getOrDefault("message", "Không thể thực hiện yêu cầu.")));
                         return;
                     }
                     if (cancelling) {
                         quickMatchQueued = false;
                         updateQuickPlayButton();
-                        quickMatchStatus.setText(" ");
+                        closeQuickMatchDialog();
                     } else if (Boolean.TRUE.equals(body.get("queued"))
                             && "lobby".equals(currentPage)) {
                         quickMatchQueued = true;
                         updateQuickPlayButton();
-                        quickMatchStatus.setText("Đang tìm đối thủ... Thông báo sẽ tự tắt khi ghép được trận.");
+                        updateQuickMatchDialog("Đang tìm đối thủ...", true);
                     }
                 }));
+    }
+
+    private void showQuickMatchDialog(String message, boolean allowCancel) {
+        closeQuickMatchDialog();
+        JDialog dialog = new JDialog(frame, Dialog.ModalityType.MODELESS);
+        dialog.setUndecorated(true);
+        dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+
+        JPanel glow = new JPanel(new GridBagLayout()) {
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                paintGlowBackground(graphics, this, new Color(255, 190, 92), 175);
+            }
+        };
+        glow.setOpaque(false);
+        JPanel card = new JPanel(new BorderLayout(12, 24));
+        card.setPreferredSize(new Dimension(500, 270));
+        card.setBackground(new Color(8, 22, 34, 250));
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BRASS, 2),
+                BorderFactory.createEmptyBorder(28, 38, 28, 38)));
+
+        JLabel title = new JLabel("ĐANG TÌM TRẬN", SwingConstants.CENTER);
+        title.setForeground(BRASS);
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 27f));
+        quickMatchDialogStatus = new JLabel(message, SwingConstants.CENTER);
+        quickMatchDialogStatus.setForeground(CREAM);
+        quickMatchDialogStatus.setFont(quickMatchDialogStatus.getFont().deriveFont(Font.PLAIN, 18f));
+        JPanel messagePanel = new JPanel(new GridLayout(2, 1, 8, 8));
+        messagePanel.setOpaque(false);
+        messagePanel.add(title);
+        messagePanel.add(quickMatchDialogStatus);
+        card.add(messagePanel, BorderLayout.CENTER);
+
+        quickMatchDialogCancel = new JButton("HỦY TÌM TRẬN");
+        styleButton(quickMatchDialogCancel, true);
+        quickMatchDialogCancel.setFont(quickMatchDialogCancel.getFont().deriveFont(Font.BOLD, 15f));
+        quickMatchDialogCancel.setEnabled(allowCancel);
+        quickMatchDialogCancel.addActionListener(e -> {
+            if (quickPlayButton != null && quickPlayButton.isEnabled()) quickPlayButton.doClick();
+        });
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        actions.setOpaque(false);
+        actions.add(quickMatchDialogCancel);
+        card.add(actions, BorderLayout.SOUTH);
+        glow.add(card);
+        dialog.setContentPane(glow);
+
+        quickMatchDialog = dialog;
+        javax.swing.Timer glowTimer = new javax.swing.Timer(55, e -> glow.repaint());
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosed(java.awt.event.WindowEvent e) {
+                glowTimer.stop();
+                if (quickMatchDialog == dialog) {
+                    quickMatchDialogStatus = null;
+                    quickMatchDialogCancel = null;
+                    quickMatchDialog = null;
+                }
+            }
+        });
+        dialog.pack();
+        dialog.setLocationRelativeTo(frame);
+        glowTimer.start();
+        dialog.setVisible(true);
+    }
+
+    private void updateQuickMatchDialog(String message, boolean allowCancel) {
+        if (quickMatchDialog == null) {
+            showQuickMatchDialog(message, allowCancel);
+            return;
+        }
+        if (quickMatchDialogStatus != null) quickMatchDialogStatus.setText(message);
+        if (quickMatchDialogCancel != null) quickMatchDialogCancel.setEnabled(allowCancel);
+    }
+
+    private void closeQuickMatchDialog() {
+        if (quickMatchDialog != null) quickMatchDialog.dispose();
     }
 
     private void updateQuickPlayButton() {
@@ -818,7 +898,7 @@ public final class ClientMain {
             if ("MATCH_START".equals(type)) {
                 quickMatchQueued = false;
                 updateQuickPlayButton();
-                quickMatchStatus.setText(" ");
+                closeQuickMatchDialog();
                 audio.playMatchFound();
                 closeGameDialog();
                 currentMatchId = String.valueOf(p.get("matchId"));
@@ -834,7 +914,7 @@ public final class ClientMain {
             } else if ("MATCH_END".equals(type)) {
                 quickMatchQueued = false;
                 updateQuickPlayButton();
-                quickMatchStatus.setText(" ");
+                closeQuickMatchDialog();
                 String result = String.valueOf(p.getOrDefault("result", ""));
                 String winner = String.valueOf(p.getOrDefault("winner", ""));
                 if ("game".equals(currentPage) && gamePanel != null) {
@@ -1602,7 +1682,7 @@ public final class ClientMain {
     private void showLogin() {
         quickMatchQueued = false;
         currentOpponent = null;
-        if (quickMatchStatus != null) quickMatchStatus.setText(" ");
+        closeQuickMatchDialog();
         updateQuickPlayButton();
         showCard("login");
         model.setRowCount(0);
